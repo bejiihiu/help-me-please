@@ -115,6 +115,10 @@ class App {
   }
 
   shutdown() {
+    console.log("Ignoring shutdown signal.");
+  }
+
+  shutdowns() {
     Notifier.warn("[WARN] Остановка приложения...");
     if (this.bot) {
       this.bot.stop("shutdown");
