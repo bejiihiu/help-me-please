@@ -110,7 +110,7 @@ class Scheduler {
         await Notifier.error("[ERROR] Не удалось сгенерировать цитату.");
         return;
       }
-      await this.bot.telegram.sendMessage(channelId, quote);
+      await this.bot.telegram.sendMessage(channelId, `💔 - ${quote}`);
       Notifier.log("[INFO] ✅ Цитата успешно отправлена в Telegram канал");
     } catch (error) {
       await Notifier.error(error, { module: "Scheduler.postQuoteToTelegram" });
