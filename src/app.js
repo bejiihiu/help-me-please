@@ -29,9 +29,9 @@ class App {
           topP: 0.9,
           topK: 40,
           candidateCount: 1,
-          responseLogprobs: false
+          responseLogprobs: false,
         },
-        systemInstruction
+        systemInstruction,
       });
       Notifier.log("[INFO] Генеративная модель успешно инициализирована.");
     } catch (error) {
@@ -70,7 +70,9 @@ class App {
       });
 
       const shutdown = () => {
-        Notifier.log("[INFO] Получен сигнал завершения. Закрываем сервер и соединения...");
+        Notifier.log(
+          "[INFO] Получен сигнал завершения. Закрываем сервер и соединения...",
+        );
         if (this.scheduler && this.scheduler.timeoutId) {
           clearTimeout(this.scheduler.timeoutId);
         }
@@ -87,7 +89,9 @@ class App {
       process.on("SIGINT", shutdown);
     } catch (error) {
       await Notifier.error(error, { module: "App.startServer" });
-      Notifier.error("[ERROR] Ошибка инициализации, повторный запуск через 15 секунд...");
+      Notifier.error(
+        "[ERROR] Ошибка инициализации, повторный запуск через 15 секунд...",
+      );
       setTimeout(() => this.startServer(), 15000);
     }
   }
@@ -132,13 +136,11 @@ class App {
 // Глобальная обработка ошибок
 process.on("unhandledRejection", (reason) => {
   Notifier.error(reason, { module: "global unhandledRejection" });
-  Notifier.error("[ERROR] Необработанное отклонение. Перезапуск приложения.");
-  process.exit(1);
+  Notifier.error("[ERROR] Необработанное отклонение. Похуй.");
 });
 process.on("uncaughtException", (error) => {
   Notifier.error(error, { module: "global uncaughtException" });
-  Notifier.error("[ERROR] Необработанное исключение. Завершаем работу.");
-  process.exit(1);
+  Notifier.error("[ERROR] Необработанное исключение. Не завершаем работу.");
 });
 
 module.exports = App;
