@@ -70,24 +70,23 @@ class App {
       });
 
       const shutdown = () => {
-        // Notifier.log(
-        //   "[INFO] Получен сигнал завершения. Закрываем сервер и соединения...",
-        // );
+        Notifier.log(
+          "[INFO] Получен сигнал завершения. Закрываем сервер и соединения...",
+        );
         // if (this.scheduler && this.scheduler.timeoutId) {
         //   clearTimeout(this.scheduler.timeoutId);
         // }
         // if (this.server) {
-        //   this.server.close(() => {
-        //     require("mongoose").connection.close(false, () => {
+        //  this.server.close(() => {
+        //    require("mongoose").connection.close(false, () => {
         //       Notifier.log("[INFO] Соединение с MongoDB закрыто.");
         //       process.exit(0);
         //     });
-        //   });
+        //  });
         // }
-      console.log('Ignoring stop signal...')
       };
-      process.on("SIGTERM", shutdown);
-      process.on("SIGINT", shutdown);
+      // process.on("SIGTERM", shutdown);
+      // process.on("SIGINT", shutdown);
     } catch (error) {
       await Notifier.error(error, { module: "App.startServer" });
       Notifier.error(
