@@ -73,20 +73,20 @@ class App {
         Notifier.log(
           "[INFO] Получен сигнал завершения. Закрываем сервер и соединения...",
         );
-        if (this.scheduler && this.scheduler.timeoutId) {
-          clearTimeout(this.scheduler.timeoutId);
-        }
-        if (this.server) {
-          this.server.close(() => {
-            require("mongoose").connection.close(false, () => {
-              Notifier.log("[INFO] Соединение с MongoDB закрыто.");
-              process.exit(0);
-            });
-          });
-        }
+        // if (this.scheduler && this.scheduler.timeoutId) {
+        //   clearTimeout(this.scheduler.timeoutId);
+        // }
+        // if (this.server) {
+        //  this.server.close(() => {
+        //    require("mongoose").connection.close(false, () => {
+        //       Notifier.log("[INFO] Соединение с MongoDB закрыто.");
+        //       process.exit(0);
+        //     });
+        //  });
+        // }
       };
-      process.on("SIGTERM", shutdown);
-      process.on("SIGINT", shutdown);
+      // process.on("SIGTERM", shutdown);
+      // process.on("SIGINT", shutdown);
     } catch (error) {
       await Notifier.error(error, { module: "App.startServer" });
       Notifier.error(
