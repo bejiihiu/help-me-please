@@ -70,9 +70,7 @@ class App {
       });
     } catch (error) {
       await Notifier.error(error, { module: "App.startServer" });
-      Notifier.error(
-        "[ERROR] Ошибка инициализации, повторный запуск через 15 секунд...",
-      );
+      Notifier.error("[ERROR] Ошибка инициализации, повторный запуск через 15 секунд...");
       setTimeout(() => this.startServer(), 15000);
     }
   }
@@ -93,10 +91,6 @@ class App {
     } else {
       this.startServer();
     }
-  }
-
-  shutdown() {
-    console.log("Ignoring shutdown signal.");
   }
 
   shutdowns() {
@@ -121,11 +115,11 @@ class App {
 // Глобальная обработка ошибок
 process.on("unhandledRejection", (reason) => {
   Notifier.error(reason, { module: "global unhandledRejection" });
-  Notifier.error("[ERROR] Необработанное отклонение. Похуй.");
+  Notifier.error("[ERROR] Необработанное отклонение.");
 });
 process.on("uncaughtException", (error) => {
   Notifier.error(error, { module: "global uncaughtException" });
-  Notifier.error("[ERROR] Необработанное исключение. Не завершаем работу.");
+  Notifier.error("[ERROR] Необработанное исключение. Работа приложения продолжается.");
 });
 
 module.exports = App;
