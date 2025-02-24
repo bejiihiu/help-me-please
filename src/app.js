@@ -11,7 +11,7 @@ const mongoose = require("mongoose");
 
 class App {
   constructor() {
-    this.lastCheckTime = Date.now()
+    this.lastCheckTime = Date.now();
     this.app = express();
     this.server = null;
     this.scheduler = null;
@@ -53,7 +53,8 @@ class App {
       this.app.use(express.json());
       this.app.use(helmet());
       this.app.get("/", (req, res) => {
-        if (Date.now() - this.lastCheckTime > 15 * 60 * 1000) return res.status(200).send("OK");
+        if (Date.now() - this.lastCheckTime < 15 * 60 * 1000)
+          return res.status(200).send("OK");
         try {
           if (this.scheduler) {
             const health = this.scheduler.checkHealth();
@@ -130,7 +131,7 @@ class App {
             } finally {
               Notifier.log("[DEBUG] Завершение command.send.");
             }
-          })
+          });
           this.scheduler.schedulePost(env.TELEGRAM_CHANNEL_ID);
         } catch (error) {
           await Notifier.error(error, {
