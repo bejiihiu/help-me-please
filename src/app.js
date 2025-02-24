@@ -15,14 +15,35 @@ class App {
     this.app = express();
     this.server = null;
     this.scheduler = null;
-    this.schedulerHealthInterval = null; // Интервал проверки планировщика (пока не используется)
+    this.schedulerHealthInterval = null;
     this.model = null;
     this.bot = null;
-    this.sendCommandRegistered = false; // Флаг для регистрации команды /send
+    this.sendCommandRegistered = false;
+  }
+
+  // Вспомогательные функции для логирования и обработки ошибок
+  static logStart(methodName) {
+    Notifier.log(`[DEBUG] Начало ${methodName}`);
+  }
+
+  static logEnd(methodName) {
+    Notifier.log(`[DEBUG] Метод ${methodName} завершён.`);
+  }
+
+  static async safeExecute(methodName, fn) {
+    App.logStart(methodName);
+    try {
+      return await fn();
+    } catch (error) {
+      await Notifier.error(error, { module: methodName });
+      throw error;
+    } finally {
+      App.logEnd(methodName);
+    }
   }
 
   async initializeModel() {
-    try {
+    return App.safeExecute("App.initializeModel", async () => {
       Notifier.log("[INFO] Инициализация генеративной модели...");
       if (!env.GEMINI_KEY) {
         throw new Error("Отсутствует ключ GEMINI_KEY в конфигурации.");
@@ -41,67 +62,65 @@ class App {
         systemInstruction,
       });
       Notifier.log("[INFO] Генеративная модель успешно инициализирована.");
-    } catch (error) {
-      await Notifier.error(error, { module: "App.initializeModel" });
-      throw error;
-    } finally {
-      Notifier.log("[DEBUG] Завершение initializeModel.");
-    }
+    });
+  }
+
+  setupHealthEndpoint() {
+    this.app.get("/", async (req, res) => {
+      try {
+        if (Date.now() - this.lastCheckTime < 15 * 60 * 1000)
+          return res.status(200).send("OK");
+        if (this.scheduler) {
+          const health = await this.scheduler.checkHealth();
+          return res.status(200).send(health ? "OK" : "Service Unavailable");
+        }
+        return res.status(500).send("Scheduler is not initialized");
+      } catch (error) {
+        await Notifier.error(error, { module: "App.healthCheck" });
+        return res.status(500).send("Error in health-check");
+      } finally {
+        this.lastCheckTime = Date.now();
+      }
+    });
+  }
+
+  setupForceEndpoint() {
+    this.app.get("/force", async (req, res) => {
+      try {
+        await this.scheduler.forcePost(env.TELEGRAM_CHANNEL_ID);
+        return res.status(200).send("OK");
+      } catch (error) {
+        await Notifier.error(error, { module: "App.forceEndpoint" });
+        return res.status(500).send("Error in force endpoint");
+      }
+    });
   }
 
   async initializeExpress() {
-    try {
+    return App.safeExecute("App.initializeExpress", async () => {
       this.app.use(express.json());
       this.app.use(helmet());
-      // Сделаем обработчик health-check асинхронным и корректно обрабатывающим ошибки
-      this.app.get("/", async (req, res) => {
-        try {
-          if (Date.now() - this.lastCheckTime < 15 * 60 * 1000)
-            return res.status(200).send("OK");
-          if (this.scheduler) {
-            const health = await this.scheduler.checkHealth();
-            if (health) {
-              return res.status(200).send("OK");
-            }
-            return res.status(503).send("Service Unavailable");
-          }
-          return res.status(500).send("Scheduler is not initialized");
-        } catch (error) {
-          await Notifier.error(error, { module: "App.healthCheck" });
-          return res.status(500).send("Error in health-check");
-        } finally {
-          this.lastCheckTime = Date.now();
-        }
-      });
+      this.setupHealthEndpoint();
+      this.setupForceEndpoint();
       Notifier.log("[INFO] Express настроен с helmet и health-check endpoint.");
-    } catch (error) {
-      await Notifier.error(error, { module: "App.initializeExpress" });
-      throw error;
-    } finally {
-      Notifier.log("[DEBUG] Завершение initializeExpress.");
-    }
+    });
   }
 
   async initializeBot() {
-    try {
+    return App.safeExecute("App.initializeBot", async () => {
       this.bot = setupBot(this);
       if (!this.bot || typeof this.bot.webhookCallback !== "function") {
         throw new Error("Бот не инициализирован корректно.");
       }
       this.app.use(this.bot.webhookCallback(webhookPath));
       Notifier.log(
-        "[INFO] Telegraf бот инициализирован и подключен к Express."
+        "[INFO] Telegraf бот инициализирован и подключен к Express.",
       );
-    } catch (error) {
-      await Notifier.error(error, { module: "App.initializeBot" });
-      throw error;
-    } finally {
-      Notifier.log("[DEBUG] Завершение initializeBot.");
-    }
+    });
   }
 
   async startServer() {
-    try {
+    return App.safeExecute("App.startServer", async () => {
       Notifier.log("[INFO] Запуск инициализации приложения...");
       await Database.connect();
       await this.initializeModel();
@@ -110,25 +129,25 @@ class App {
 
       const PORT = env.PORT || 3000;
       this.server = this.app.listen(PORT, () => {
-        // Оборачиваем асинхронный код в IIFE для обработки ошибок
         (async () => {
           try {
             Notifier.log(`🚀 Express сервер запущен на порту ${PORT}`);
             if (!env.TELEGRAM_CHANNEL_ID) {
-              throw new Error("Отсутствует TELEGRAM_CHANNEL_ID в конфигурации.");
+              throw new Error(
+                "Отсутствует TELEGRAM_CHANNEL_ID в конфигурации.",
+              );
             }
-            // Если уже существует планировщик, отменяем его перед созданием нового
             if (this.scheduler) {
               this.scheduler.cancelSchedule();
             }
             this.scheduler = new Scheduler(this.model, this.bot);
-            // Отправляем первый пост и запускаем цикл планирования
             await this.scheduler.postQuoteToTelegram(env.TELEGRAM_CHANNEL_ID);
-            // Регистрируем команду /send только один раз
             if (!this.sendCommandRegistered) {
               this.bot.command("send", async (ctx) => {
                 try {
-                  await this.scheduler.postQuoteToTelegram(env.TELEGRAM_CHANNEL_ID);
+                  await this.scheduler.postQuoteToTelegram(
+                    env.TELEGRAM_CHANNEL_ID,
+                  );
                   ctx.reply("Пост отправлен");
                 } catch (error) {
                   await Notifier.error(error, {
@@ -142,25 +161,46 @@ class App {
             }
             this.scheduler.schedulePost(env.TELEGRAM_CHANNEL_ID);
           } catch (error) {
-            await Notifier.error(error, { module: "App.startServer.listenCallback" });
+            await Notifier.error(error, {
+              module: "App.startServer.listenCallback",
+            });
           } finally {
             Notifier.log("[DEBUG] Завершение колбэка app.listen.");
           }
         })();
       });
-    } catch (error) {
-      await Notifier.error(error, { module: "App.startServer" });
-      Notifier.error(
-        "[ERROR] Ошибка инициализации, повторный запуск через 15 секунд..."
-      );
-      setTimeout(() => this.startServer(), 15000);
-    } finally {
-      Notifier.log("[DEBUG] Завершение startServer.");
-    }
+    });
+  }
+
+  // Вспомогательный метод для закрытия сервера и соединения с MongoDB
+  async closeServices() {
+    await new Promise((resolve, reject) => {
+      if (this.server) {
+        this.server.close((err) => {
+          if (err) {
+            Notifier.error(err, { module: "App.closeServices.serverClose" });
+            return reject(err);
+          }
+          resolve();
+        });
+      } else {
+        resolve();
+      }
+    });
+
+    await new Promise((resolve, reject) => {
+      mongoose.connection.close(false, (err) => {
+        if (err) {
+          Notifier.error(err, { module: "App.closeServices.mongooseClose" });
+          return reject(err);
+        }
+        resolve();
+      });
+    });
   }
 
   async restart() {
-    try {
+    return App.safeExecute("App.restart", async () => {
       Notifier.log("[INFO] Перезапуск приложения...");
       if (this.scheduler) {
         this.scheduler.cancelSchedule();
@@ -177,43 +217,14 @@ class App {
           await Notifier.error(botError, { module: "App.restart.botStop" });
         }
       }
-      if (this.server) {
-        await new Promise((resolve, reject) => {
-          this.server.close((err) => {
-            if (err) {
-              Notifier.error(err, { module: "App.restart.serverClose" });
-              return reject(err);
-            }
-            return resolve();
-          });
-        });
-        await new Promise((resolve, reject) => {
-          mongoose.connection.close(false, (err) => {
-            if (err) {
-              Notifier.error(err, { module: "App.restart.mongooseClose" });
-              return reject(err);
-            }
-            return resolve();
-          });
-        });
-        Notifier.log("[INFO] Соединения закрыты. Перезапуск...");
-        await this.startServer();
-      } else {
-        await this.startServer();
-      }
-    } catch (error) {
-      await Notifier.error(error, { module: "App.restart" });
-    } finally {
-      Notifier.log("[DEBUG] Завершение метода restart.");
-    }
-  }
-
-  shutdown() {
-    console.log("Ignoring shutdown signal.");
+      await this.closeServices();
+      Notifier.log("[INFO] Соединения закрыты. Перезапуск...");
+      await this.startServer();
+    });
   }
 
   async shutdowns() {
-    try {
+    return App.safeExecute("App.shutdowns", async () => {
       Notifier.warn("[WARN] Остановка приложения...");
       if (this.scheduler) {
         this.scheduler.cancelSchedule();
@@ -230,36 +241,14 @@ class App {
           await Notifier.error(botError, { module: "App.shutdowns.botStop" });
         }
       }
-      if (this.server) {
-        await new Promise((resolve, reject) => {
-          this.server.close((err) => {
-            if (err) {
-              Notifier.error(err, { module: "App.shutdowns.serverClose" });
-              return reject(err);
-            }
-            return resolve();
-          });
-        });
-        await new Promise((resolve, reject) => {
-          mongoose.connection.close(false, (err) => {
-            if (err) {
-              Notifier.error(err, { module: "App.shutdowns.mongooseClose" });
-              return reject(err);
-            }
-            return resolve();
-          });
-        });
-        Notifier.log("[INFO] Соединения закрыты.");
-        process.exit(0);
-      } else {
-        process.exit(0);
-      }
-    } catch (error) {
-      await Notifier.error(error, { module: "App.shutdowns" });
-      process.exit(1);
-    } finally {
-      Notifier.log("[DEBUG] Завершение shutdowns.");
-    }
+      await this.closeServices();
+      Notifier.log("[INFO] Соединения закрыты.");
+      process.exit(0);
+    });
+  }
+
+  shutdown() {
+    console.log("Ignoring shutdown signal.");
   }
 }
 
@@ -271,8 +260,6 @@ process.on("unhandledRejection", (reason) => {
 process.on("uncaughtException", (error) => {
   Notifier.error(error, { module: "global uncaughtException" });
   Notifier.error("[ERROR] Необработанное исключение.");
-  // Возможный вариант: завершить процесс, если ошибка критическая
-  // process.exit(1);
 });
 
 module.exports = App;
