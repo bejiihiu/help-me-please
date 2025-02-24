@@ -73,8 +73,8 @@ class Scheduler {
         `[DEBUG] Текущее время с учетом TZ: ${currentTime.toISOString()}`,
       );
       const hour = currentTime.getHours();
-      if (hour >= 8 && hour < 12) return [1, 45];
-      if (hour >= 12 && hour < 18) return [20, 90];
+      if (hour >= 8 && hour < 16) return [1, 45];
+      if (hour >= 16 && hour < 18) return [20, 90];
       if (hour >= 18 && hour < 23) return [45, 120];
       return [120, 300];
     } catch (error) {
