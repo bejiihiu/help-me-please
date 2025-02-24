@@ -34,7 +34,7 @@ function setupBot(appInstance) {
         "Если нужны дополнительные функции или помощь, обратись к администратору.",
     );
   });
-
+  
   // Обработка inline-действий администратора
   bot.on("callback_query", async (ctx) => {
     if (!isAdmin(ctx)) return;

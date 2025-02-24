@@ -51,7 +51,17 @@ class App {
     try {
       this.app.use(express.json());
       this.app.use(helmet());
-      this.app.get("/", (req, res) => res.send("OK"));
+      this.app.get("/", (req, res) => {
+        if (this.scheduler) {
+          const health = this.scheduler.checkHealth();
+
+          if (health) {
+            return res.status(200).send("OK");
+          }
+          return res.status(503).send("Service Unavailable");
+        }
+        return res.status(500).send("Scheduler is not initialized");
+      });
       Notifier.log("[INFO] Express настроен с helmet и health-check endpoint.");
     } catch (error) {
       await Notifier.error(error, { module: "App.initializeExpress" });
@@ -68,7 +78,9 @@ class App {
         throw new Error("Бот не инициализирован корректно.");
       }
       this.app.use(this.bot.webhookCallback(webhookPath));
-      Notifier.log("[INFO] Telegraf бот инициализирован и подключен к Express.");
+      Notifier.log(
+        "[INFO] Telegraf бот инициализирован и подключен к Express.",
+      );
     } catch (error) {
       await Notifier.error(error, { module: "App.initializeBot" });
       throw error;
@@ -100,21 +112,31 @@ class App {
           // Отправляем первый пост и запускаем цикл планирования
           await this.scheduler.postQuoteToTelegram(env.TELEGRAM_CHANNEL_ID);
           this.scheduler.schedulePost(env.TELEGRAM_CHANNEL_ID);
-          // Запускаем health-check планировщика каждые 5 минут
-          this.schedulerHealthInterval = setInterval(() => {
-            if (this.scheduler) {
-              this.scheduler.checkHealth();
-            }
-          }, 5 * 60 * 1000);
         } catch (error) {
-          await Notifier.error(error, { module: "App.startServer.listenCallback" });
+          await Notifier.error(error, {
+            module: "App.startServer.listenCallback",
+          });
         } finally {
           Notifier.log("[DEBUG] Завершение колбэка app.listen.");
         }
       });
+      this.bot.command("send", async (ctx) => {
+        try {
+          await this.scheduler.postQuoteToTelegram(env.TELEGRAM_CHANNEL_ID);
+          ctx.reply("Пост отправлен");
+        } catch (error) {
+          await Notifier.error(error, {
+            module: "App.startServer.command.send",
+          });
+        } finally {
+          Notifier.log("[DEBUG] Завершение command.send.");
+        }
+      })
     } catch (error) {
       await Notifier.error(error, { module: "App.startServer" });
-      Notifier.error("[ERROR] Ошибка инициализации, повторный запуск через 15 секунд...");
+      Notifier.error(
+        "[ERROR] Ошибка инициализации, повторный запуск через 15 секунд...",
+      );
       setTimeout(() => this.startServer(), 15000);
     } finally {
       Notifier.log("[DEBUG] Завершение startServer.");
