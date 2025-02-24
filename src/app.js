@@ -14,6 +14,7 @@ class App {
     this.app = express();
     this.server = null;
     this.scheduler = null;
+    this.schedulerHealthInterval = null; // Интервал проверки планировщика
     this.model = null;
     this.bot = null;
   }
@@ -67,9 +68,7 @@ class App {
         throw new Error("Бот не инициализирован корректно.");
       }
       this.app.use(this.bot.webhookCallback(webhookPath));
-      Notifier.log(
-        "[INFO] Telegraf бот инициализирован и подключен к Express.",
-      );
+      Notifier.log("[INFO] Telegraf бот инициализирован и подключен к Express.");
     } catch (error) {
       await Notifier.error(error, { module: "App.initializeBot" });
       throw error;
@@ -101,19 +100,21 @@ class App {
           // Отправляем первый пост и запускаем цикл планирования
           await this.scheduler.postQuoteToTelegram(env.TELEGRAM_CHANNEL_ID);
           this.scheduler.schedulePost(env.TELEGRAM_CHANNEL_ID);
+          // Запускаем health-check планировщика каждые 5 минут
+          this.schedulerHealthInterval = setInterval(() => {
+            if (this.scheduler) {
+              this.scheduler.checkHealth();
+            }
+          }, 5 * 60 * 1000);
         } catch (error) {
-          await Notifier.error(error, {
-            module: "App.startServer.listenCallback",
-          });
+          await Notifier.error(error, { module: "App.startServer.listenCallback" });
         } finally {
           Notifier.log("[DEBUG] Завершение колбэка app.listen.");
         }
       });
     } catch (error) {
       await Notifier.error(error, { module: "App.startServer" });
-      Notifier.error(
-        "[ERROR] Ошибка инициализации, повторный запуск через 15 секунд...",
-      );
+      Notifier.error("[ERROR] Ошибка инициализации, повторный запуск через 15 секунд...");
       setTimeout(() => this.startServer(), 15000);
     } finally {
       Notifier.log("[DEBUG] Завершение startServer.");
@@ -123,9 +124,12 @@ class App {
   restart() {
     try {
       Notifier.log("[INFO] Перезапуск приложения...");
-      // Останавливаем планировщик, если он существует
       if (this.scheduler) {
         this.scheduler.cancelSchedule();
+      }
+      if (this.schedulerHealthInterval) {
+        clearInterval(this.schedulerHealthInterval);
+        this.schedulerHealthInterval = null;
       }
       if (this.bot) {
         try {
@@ -165,9 +169,12 @@ class App {
   shutdowns() {
     try {
       Notifier.warn("[WARN] Остановка приложения...");
-      // Останавливаем планировщик, если он существует
       if (this.scheduler) {
         this.scheduler.cancelSchedule();
+      }
+      if (this.schedulerHealthInterval) {
+        clearInterval(this.schedulerHealthInterval);
+        this.schedulerHealthInterval = null;
       }
       if (this.bot) {
         try {
