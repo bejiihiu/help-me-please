@@ -14,7 +14,23 @@ class Scheduler {
     Notifier.log("[DEBUG] timeoutId инициализирован как null");
   }
 
+  // Метод для остановки запланированного таймера
+  cancelSchedule() {
+    try {
+      if (this.timeoutId) {
+        clearTimeout(this.timeoutId);
+        Notifier.log("[INFO] Запланированный таймер остановлен.");
+        this.timeoutId = null;
+      }
+    } catch (error) {
+      Notifier.error(error, { module: "Scheduler.cancelSchedule" });
+    } finally {
+      Notifier.log("[DEBUG] Метод cancelSchedule завершён.");
+    }
+  }
+
   static getRandomTime(minMinutes, maxMinutes) {
+<<<<<<< HEAD
     Notifier.log(
       `[DEBUG] Вызов getRandomTime с minMinutes=${minMinutes}, maxMinutes=${maxMinutes}`,
     );
@@ -95,9 +111,79 @@ class Scheduler {
     const now = Date.now();
     Notifier.log(`[DEBUG] Текущее время now=${now}`);
     if (nextPost && nextPost > now) {
+=======
+    try {
+      if (minMinutes > maxMinutes) {
+        Notifier.warn(
+          `[WARN] minMinutes (${minMinutes}) больше maxMinutes (${maxMinutes}). Значения изменены местами.`,
+        );
+        [minMinutes, maxMinutes] = [maxMinutes, minMinutes];
+      }
+      const minMs = minMinutes * 60 * 1000;
+      const maxMs = maxMinutes * 60 * 1000;
+      const randomDelay = randomInt(minMs, maxMs + 1);
       Notifier.log(
-        "[INFO] Используем запланированное время для следующего поста.",
+        `[DEBUG] Случайное время задержки: ${randomDelay} мс (от ${minMinutes} до ${maxMinutes} минут)`,
       );
+      return randomDelay;
+    } catch (error) {
+      Notifier.error(error, { module: "Scheduler.getRandomTime" });
+      // Если произошла ошибка, возвращаем fallback (10 минут)
+      return 10 * 60 * 1000;
+    } finally {
+      Notifier.log("[DEBUG] Метод getRandomTime завершён.");
+    }
+  }
+
+  static shouldSkipPost() {
+    try {
+      const skip = randomInt(0, 100) < 10;
+      Notifier.log(
+        `[DEBUG] Проверка пропуска поста: ${skip ? "Пропускаем" : "Отправляем"}`,
+      );
+      return skip;
+    } catch (error) {
+      Notifier.error(error, { module: "Scheduler.shouldSkipPost" });
+      return false; // По умолчанию не пропускать пост
+    } finally {
+      Notifier.log("[DEBUG] Метод shouldSkipPost завершён.");
+    }
+  }
+
+  static getTimeInterval() {
+    try {
+      const parsedOffset = parseInt(process.env.TIMEZONE_OFFSET, 10);
+      const timezoneOffset = isNaN(parsedOffset) ? 0 : parsedOffset;
+      const currentTime = new Date(Date.now() + timezoneOffset * 3600000);
+      Notifier.log(
+        `[DEBUG] Текущее время с учетом TZ: ${currentTime.toISOString()}`,
+      );
+      const hour = currentTime.getHours();
+      if (hour >= 8 && hour < 12) return [1, 45];
+      if (hour >= 12 && hour < 18) return [20, 90];
+      if (hour >= 18 && hour < 23) return [45, 120];
+      return [120, 300];
+    } catch (error) {
+      Notifier.error(error, { module: "Scheduler.getTimeInterval" });
+      return [120, 300];
+    } finally {
+      Notifier.log("[DEBUG] Метод getTimeInterval завершён.");
+    }
+  }
+
+  static async computeNextPostTime() {
+    let nextPost = 0;
+    try {
+      const [minInterval, maxInterval] = Scheduler.getTimeInterval();
+      const postDoc = await PostModel.findById("singleton");
+      let lastTime = postDoc?.lastPost || 0;
+      nextPost = postDoc?.nextPost || 0;
+      const now = Date.now();
+>>>>>>> d589b5d (Fix scheduler)
+      Notifier.log(
+        `[DEBUG] Текущее время: ${now}, Последний пост: ${lastTime}, Следующий пост: ${nextPost}`,
+      );
+<<<<<<< HEAD
       return nextPost;
     }
     let delay = 0;
@@ -108,17 +194,58 @@ class Scheduler {
       );
       if (elapsedMinutes < minInterval) {
         delay = (minInterval - elapsedMinutes) * 60000;
+=======
+      if (nextPost && nextPost > now) {
+>>>>>>> d589b5d (Fix scheduler)
         Notifier.log(
-          `[INFO] Недостаточно времени прошло с последнего поста (${elapsedMinutes.toFixed(2)} мин). Планируем через ${(delay / 60000).toFixed(2)} мин.`,
+          "[INFO] Используем запланированное время для следующего поста.",
         );
+        return nextPost;
+      }
+      let delay = 0;
+      if (lastTime) {
+        const elapsedMinutes = (now - lastTime) / 60000;
+        if (elapsedMinutes < minInterval) {
+          delay = (minInterval - elapsedMinutes) * 60000;
+          Notifier.log(
+            `[INFO] Недостаточно времени прошло с последнего поста (${elapsedMinutes.toFixed(
+              2,
+            )} мин). Планируем через ${(delay / 60000).toFixed(2)} мин.`,
+          );
+        } else {
+          delay = Scheduler.getRandomTime(minInterval, maxInterval);
+        }
       } else {
         delay = Scheduler.getRandomTime(minInterval, maxInterval);
+<<<<<<< HEAD
         Notifier.log(`[DEBUG] Задержка после последнего поста: ${delay} мс`);
+=======
+        Notifier.log("[INFO] Нет предыдущих записей. Планируем первый пост.");
+>>>>>>> d589b5d (Fix scheduler)
       }
-    } else {
-      delay = Scheduler.getRandomTime(minInterval, maxInterval);
-      Notifier.log("[INFO] Нет предыдущих записей. Планируем первый пост.");
+      nextPost = now + delay;
+      await PostModel.findByIdAndUpdate(
+        "singleton",
+        { lastPost: lastTime, nextPost },
+        { upsert: true },
+      );
+      Notifier.log(
+        `[DEBUG] Следующий пост запланирован на: ${new Date(nextPost).toISOString()}`,
+      );
+      return nextPost;
+    } catch (error) {
+      await Notifier.error(error, { module: "Scheduler.computeNextPostTime" });
+      const fallbackDelay = Scheduler.getRandomTime(10, 15);
+      Notifier.warn(
+        `[WARN] Ошибка вычисления следующего поста. Используем fallback через ${Math.round(
+          fallbackDelay / 60000,
+        )} минут.`,
+      );
+      return Date.now() + fallbackDelay;
+    } finally {
+      Notifier.log("[DEBUG] Метод computeNextPostTime завершён.");
     }
+<<<<<<< HEAD
     nextPost = now + delay;
     Notifier.log(`[DEBUG] Расчет nextPost=${new Date(nextPost).toISOString()}`);
     try {
@@ -138,6 +265,8 @@ class Scheduler {
       `[DEBUG] Следующий пост запланирован на: ${new Date(nextPost).toISOString()}`,
     );
     return nextPost;
+=======
+>>>>>>> d589b5d (Fix scheduler)
   }
 
   async generateTextFromPrompt(promptPath) {
@@ -150,12 +279,25 @@ class Scheduler {
       const prompt = await fs.readFile(promptPath, "utf-8");
       Notifier.log(`[DEBUG] Прочитанный промпт: ${prompt}`);
       const result = await this.model.generateContentStream(prompt);
+<<<<<<< HEAD
       Notifier.log("[DEBUG] Результат генерации контента получен.");
       if (!result || !result.stream) {
         Notifier.log("[ERROR] Результат генерации не содержит stream.");
         return "";
+=======
+      if (
+        !result?.stream ||
+        typeof result.stream[Symbol.asyncIterator] !== "function"
+      ) {
+        throw new Error(
+          "Неверный формат результата генерации: отсутствует асинхронный итератор stream",
+        );
+>>>>>>> d589b5d (Fix scheduler)
       }
       for await (const chunk of result.stream) {
+        if (typeof chunk.text !== "function") {
+          throw new Error("Неверный формат чанка: отсутствует функция text()");
+        }
         const chunkText = chunk.text();
         Notifier.log(`[DEBUG] Обработан CHUNK: ${chunkText}`);
         resultText += chunkText;
@@ -170,12 +312,17 @@ class Scheduler {
         promptPath,
       });
       return "";
+    } finally {
+      Notifier.log("[DEBUG] Метод generateTextFromPrompt завершён.");
     }
   }
 
   async postQuoteToTelegram(channelId) {
     Notifier.log(`[DEBUG] Вызов postQuoteToTelegram с channelId=${channelId}`);
     try {
+      if (!channelId) {
+        throw new Error("channelId не задан или недействителен");
+      }
       Notifier.log("[INFO] Начало генерации цитаты для Telegram.");
       const quote = await this.generateTextFromPrompt("./prompt.txt");
       Notifier.log(`[DEBUG] Сгенерированная цитата: ${quote}`);
@@ -191,17 +338,33 @@ class Scheduler {
       await this.bot.telegram.sendMessage(channelId, `💔 - ${quote}`);
       Notifier.log("[INFO] ✅ Цитата успешно отправлена в Telegram канал");
     } catch (error) {
+<<<<<<< HEAD
       await Notifier.error(error, {
         module: "Scheduler.postQuoteToTelegram",
         channelId,
       });
+=======
+      await Notifier.error(error, { module: "Scheduler.postQuoteToTelegram" });
+    } finally {
+      Notifier.log("[DEBUG] Метод postQuoteToTelegram завершён.");
+>>>>>>> d589b5d (Fix scheduler)
     }
   }
 
   async schedulePost(channelId) {
     Notifier.log(`[DEBUG] Вызов schedulePost с channelId=${channelId}`);
     try {
+<<<<<<< HEAD
       Notifier.log("[INFO] Начало планирования следующего поста.");
+=======
+      if (!channelId) {
+        throw new Error("channelId не задан или недействителен");
+      }
+      if (this.timeoutId) {
+        clearTimeout(this.timeoutId);
+        this.timeoutId = null;
+      }
+>>>>>>> d589b5d (Fix scheduler)
       const nextPostTime = await Scheduler.computeNextPostTime();
       Notifier.log(
         `[DEBUG] Вычисленное время следующего поста: ${new Date(nextPostTime).toISOString()}`,
@@ -212,6 +375,7 @@ class Scheduler {
       Notifier.log(
         `[INFO] Планирование следующего поста через ${Math.round(delay / 60000)} минут (задержка ${delay} мс)`,
       );
+
       this.timeoutId = setTimeout(async () => {
         Notifier.log("[DEBUG] Запуск таймаута для публикации поста");
         try {
@@ -239,11 +403,18 @@ class Scheduler {
             module: "Scheduler.schedulePost inner",
             channelId,
           });
+        } finally {
+          Notifier.log("[DEBUG] Завершение выполнения отложенного поста.");
+          // Рекурсивно планируем следующий пост после выполнения текущего
+          this.schedulePost(channelId);
         }
+<<<<<<< HEAD
         Notifier.log(
           "[DEBUG] Рекурсивный вызов schedulePost для следующей публикации",
         );
         this.schedulePost(channelId);
+=======
+>>>>>>> d589b5d (Fix scheduler)
       }, delay);
       Notifier.log("[DEBUG] Таймер установлен.");
     } catch (error) {
@@ -255,12 +426,21 @@ class Scheduler {
       Notifier.warn(
         `[WARN] Ошибка планирования поста. Попытка через ${Math.round(fallbackDelay / 60000)} минут.`,
       );
+<<<<<<< HEAD
       this.timeoutId = setTimeout(() => {
         Notifier.log(
           "[DEBUG] Запуск таймаута fallback для повторного планирования поста",
         );
         this.schedulePost(channelId);
       }, fallbackDelay);
+=======
+      this.timeoutId = setTimeout(
+        () => this.schedulePost(channelId),
+        fallbackDelay,
+      );
+    } finally {
+      Notifier.log("[DEBUG] Метод schedulePost завершён.");
+>>>>>>> d589b5d (Fix scheduler)
     }
   }
 }

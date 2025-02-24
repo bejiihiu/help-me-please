@@ -7,6 +7,7 @@ const Database = require("./services/Database");
 const Scheduler = require("./services/Scheduler");
 const setupBot = require("./bot/bot");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
+const mongoose = require("mongoose");
 
 class App {
   constructor() {
@@ -20,6 +21,9 @@ class App {
   async initializeModel() {
     try {
       Notifier.log("[INFO] Инициализация генеративной модели...");
+      if (!env.GEMINI_KEY) {
+        throw new Error("Отсутствует ключ GEMINI_KEY в конфигурации.");
+      }
       const systemInstruction = await fs.readFile("system.txt", "utf-8");
       const genAI = new GoogleGenerativeAI(env.GEMINI_KEY);
       this.model = genAI.getGenerativeModel({
@@ -37,20 +41,41 @@ class App {
     } catch (error) {
       await Notifier.error(error, { module: "App.initializeModel" });
       throw error;
+    } finally {
+      Notifier.log("[DEBUG] Завершение initializeModel.");
     }
   }
 
   async initializeExpress() {
-    this.app.use(express.json());
-    this.app.use(helmet());
-    this.app.get("/", (req, res) => res.send("OK"));
-    Notifier.log("[INFO] Express настроен с helmet и health-check endpoint.");
+    try {
+      this.app.use(express.json());
+      this.app.use(helmet());
+      this.app.get("/", (req, res) => res.send("OK"));
+      Notifier.log("[INFO] Express настроен с helmet и health-check endpoint.");
+    } catch (error) {
+      await Notifier.error(error, { module: "App.initializeExpress" });
+      throw error;
+    } finally {
+      Notifier.log("[DEBUG] Завершение initializeExpress.");
+    }
   }
 
   async initializeBot() {
-    this.bot = setupBot(this);
-    this.app.use(this.bot.webhookCallback(webhookPath));
-    Notifier.log("[INFO] Telegraf бот инициализирован и подключен к Express.");
+    try {
+      this.bot = setupBot(this);
+      if (!this.bot || typeof this.bot.webhookCallback !== "function") {
+        throw new Error("Бот не инициализирован корректно.");
+      }
+      this.app.use(this.bot.webhookCallback(webhookPath));
+      Notifier.log(
+        "[INFO] Telegraf бот инициализирован и подключен к Express.",
+      );
+    } catch (error) {
+      await Notifier.error(error, { module: "App.initializeBot" });
+      throw error;
+    } finally {
+      Notifier.log("[DEBUG] Завершение initializeBot.");
+    }
   }
 
   async startServer() {
@@ -63,51 +88,116 @@ class App {
 
       const PORT = env.PORT || 3000;
       this.server = this.app.listen(PORT, async () => {
-        Notifier.log(`🚀 Express сервер запущен на порту ${PORT}`);
-        this.scheduler = new Scheduler(this.model, this.bot);
-        await this.scheduler.postQuoteToTelegram(env.TELEGRAM_CHANNEL_ID);
-        this.scheduler.schedulePost(env.TELEGRAM_CHANNEL_ID);
+        try {
+          Notifier.log(`🚀 Express сервер запущен на порту ${PORT}`);
+          if (!env.TELEGRAM_CHANNEL_ID) {
+            throw new Error("Отсутствует TELEGRAM_CHANNEL_ID в конфигурации.");
+          }
+          // Если уже существует планировщик, отменяем его перед созданием нового
+          if (this.scheduler) {
+            this.scheduler.cancelSchedule();
+          }
+          this.scheduler = new Scheduler(this.model, this.bot);
+          // Отправляем первый пост и запускаем цикл планирования
+          await this.scheduler.postQuoteToTelegram(env.TELEGRAM_CHANNEL_ID);
+          this.scheduler.schedulePost(env.TELEGRAM_CHANNEL_ID);
+        } catch (error) {
+          await Notifier.error(error, {
+            module: "App.startServer.listenCallback",
+          });
+        } finally {
+          Notifier.log("[DEBUG] Завершение колбэка app.listen.");
+        }
       });
     } catch (error) {
       await Notifier.error(error, { module: "App.startServer" });
-      Notifier.error("[ERROR] Ошибка инициализации, повторный запуск через 15 секунд...");
+      Notifier.error(
+        "[ERROR] Ошибка инициализации, повторный запуск через 15 секунд...",
+      );
       setTimeout(() => this.startServer(), 15000);
+    } finally {
+      Notifier.log("[DEBUG] Завершение startServer.");
     }
   }
 
   restart() {
-    Notifier.log("[INFO] Перезапуск приложения...");
-    if (this.bot) {
-      this.bot.stop("restart");
-      Notifier.log("[INFO] Telegraf бот остановлен для перезапуска.");
-    }
-    if (this.server) {
-      this.server.close(() => {
-        require("mongoose").connection.close(false, async () => {
-          Notifier.log("[INFO] Соединения закрыты. Перезапуск...");
-          await this.startServer();
+    try {
+      Notifier.log("[INFO] Перезапуск приложения...");
+      // Останавливаем планировщик, если он существует
+      if (this.scheduler) {
+        this.scheduler.cancelSchedule();
+      }
+      if (this.bot) {
+        try {
+          this.bot.stop("restart");
+          Notifier.log("[INFO] Telegraf бот остановлен для перезапуска.");
+        } catch (botError) {
+          Notifier.error(botError, { module: "App.restart.botStop" });
+        }
+      }
+      if (this.server) {
+        this.server.close((err) => {
+          if (err) {
+            Notifier.error(err, { module: "App.restart.serverClose" });
+          }
+          mongoose.connection.close(false, async (err) => {
+            if (err) {
+              Notifier.error(err, { module: "App.restart.mongooseClose" });
+            }
+            Notifier.log("[INFO] Соединения закрыты. Перезапуск...");
+            await this.startServer();
+          });
         });
-      });
-    } else {
-      this.startServer();
+      } else {
+        this.startServer();
+      }
+    } catch (error) {
+      Notifier.error(error, { module: "App.restart" });
+    } finally {
+      Notifier.log("[DEBUG] Завершение метода restart.");
     }
   }
 
+  shutdown() {
+    console.log("Ignoring shutdown signal.");
+  }
+
   shutdowns() {
-    Notifier.warn("[WARN] Остановка приложения...");
-    if (this.bot) {
-      this.bot.stop("shutdown");
-      Notifier.log("[INFO] Telegraf бот остановлен.");
-    }
-    if (this.server) {
-      this.server.close(() => {
-        require("mongoose").connection.close(false, () => {
-          Notifier.log("[INFO] Соединения закрыты.");
-          process.exit(0);
+    try {
+      Notifier.warn("[WARN] Остановка приложения...");
+      // Останавливаем планировщик, если он существует
+      if (this.scheduler) {
+        this.scheduler.cancelSchedule();
+      }
+      if (this.bot) {
+        try {
+          this.bot.stop("shutdown");
+          Notifier.log("[INFO] Telegraf бот остановлен.");
+        } catch (botError) {
+          Notifier.error(botError, { module: "App.shutdowns.botStop" });
+        }
+      }
+      if (this.server) {
+        this.server.close((err) => {
+          if (err) {
+            Notifier.error(err, { module: "App.shutdowns.serverClose" });
+          }
+          mongoose.connection.close(false, (err) => {
+            if (err) {
+              Notifier.error(err, { module: "App.shutdowns.mongooseClose" });
+            }
+            Notifier.log("[INFO] Соединения закрыты.");
+            process.exit(0);
+          });
         });
-      });
-    } else {
-      process.exit(0);
+      } else {
+        process.exit(0);
+      }
+    } catch (error) {
+      Notifier.error(error, { module: "App.shutdowns" });
+      process.exit(1);
+    } finally {
+      Notifier.log("[DEBUG] Завершение shutdowns.");
     }
   }
 }
@@ -119,7 +209,9 @@ process.on("unhandledRejection", (reason) => {
 });
 process.on("uncaughtException", (error) => {
   Notifier.error(error, { module: "global uncaughtException" });
-  Notifier.error("[ERROR] Необработанное исключение. Работа приложения продолжается.");
+  Notifier.error("[ERROR] Необработанное исключение.");
+  // Возможный вариант: завершить процесс, если ошибка критическая
+  // process.exit(1);
 });
 
 module.exports = App;
