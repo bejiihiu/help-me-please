@@ -198,12 +198,17 @@ class Scheduler {
           );
         }
         let resultText = "";
-        for await (const chunk of result.stream) {
-          const chunkText = Scheduler.extractChunkText(chunk);
-          resultText += chunkText;
-          Notifier.log("[DEBUG] Получен CHUNK:", chunkText);
+        try {
+          for await (const chunk of result.stream) {
+            const chunkText = Scheduler.extractChunkText(chunk);
+            resultText += chunkText;
+            Notifier.log("[DEBUG] Получен CHUNK:", chunkText);
+          }
+          Notifier.log("[INFO] Генерация текста завершена.");
+        } catch (error) {
+          Notifier.log("[ERROR] Ошибка при обработке потока:", error);
+          resultText += "..."; // Добавляем многоточие в случае ошибки
         }
-        Notifier.log("[INFO] Генерация текста завершена.");
         return resultText;
       },
     );
