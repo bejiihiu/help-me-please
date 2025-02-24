@@ -11,6 +11,7 @@ const mongoose = require("mongoose");
 
 class App {
   constructor() {
+    this.lastCheckTime = Date.now()
     this.app = express();
     this.server = null;
     this.scheduler = null;
@@ -52,15 +53,22 @@ class App {
       this.app.use(express.json());
       this.app.use(helmet());
       this.app.get("/", (req, res) => {
-        if (this.scheduler) {
-          const health = this.scheduler.checkHealth();
+        if (Date.now() - this.lastCheckTime > 15 * 60 * 1000) return res.status(200).send("OK");
+        try {
+          if (this.scheduler) {
+            const health = this.scheduler.checkHealth();
 
-          if (health) {
-            return res.status(200).send("OK");
+            if (health) {
+              return res.status(200).send("OK");
+            }
+            return res.status(503).send("Service Unavailable");
           }
-          return res.status(503).send("Service Unavailable");
+          return res.status(500).send("Scheduler is not initialized");
+        } catch {
+          Notifier.error(error, { module: "App.healthCheck" });
+        } finally {
+          this.lastCheckTime = Date.now();
         }
-        return res.status(500).send("Scheduler is not initialized");
       });
       Notifier.log("[INFO] Express настроен с helmet и health-check endpoint.");
     } catch (error) {
@@ -111,6 +119,18 @@ class App {
           this.scheduler = new Scheduler(this.model, this.bot);
           // Отправляем первый пост и запускаем цикл планирования
           await this.scheduler.postQuoteToTelegram(env.TELEGRAM_CHANNEL_ID);
+          this.bot.command("send", async (ctx) => {
+            try {
+              await this.scheduler.postQuoteToTelegram(env.TELEGRAM_CHANNEL_ID);
+              ctx.reply("Пост отправлен");
+            } catch (error) {
+              await Notifier.error(error, {
+                module: "App.startServer.command.send",
+              });
+            } finally {
+              Notifier.log("[DEBUG] Завершение command.send.");
+            }
+          })
           this.scheduler.schedulePost(env.TELEGRAM_CHANNEL_ID);
         } catch (error) {
           await Notifier.error(error, {
@@ -120,18 +140,6 @@ class App {
           Notifier.log("[DEBUG] Завершение колбэка app.listen.");
         }
       });
-      this.bot.command("send", async (ctx) => {
-        try {
-          await this.scheduler.postQuoteToTelegram(env.TELEGRAM_CHANNEL_ID);
-          ctx.reply("Пост отправлен");
-        } catch (error) {
-          await Notifier.error(error, {
-            module: "App.startServer.command.send",
-          });
-        } finally {
-          Notifier.log("[DEBUG] Завершение command.send.");
-        }
-      })
     } catch (error) {
       await Notifier.error(error, { module: "App.startServer" });
       Notifier.error(
