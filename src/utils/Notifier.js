@@ -22,9 +22,7 @@ class Notifier {
       return;
     Notifier.lastTelegramLogTime = now;
     if (
-      Notifier.adminBot &&
-      Notifier.adminBot.telegram &&
-      typeof Notifier.adminBot.telegram.sendMessage === "function"
+      typeof Notifier.adminBot?.telegram?.sendMessage === "function"
     ) {
       try {
         await Notifier.adminBot.telegram.sendMessage(

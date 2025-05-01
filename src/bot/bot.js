@@ -110,7 +110,7 @@ Memory: ${JSON.stringify(memoryUsage, null, 2)}`;
 
   // Обработка текстовых сообщений от пользователей
   bot.on("text", async (ctx) => {
-    if (!ctx.message || !ctx.message.text) return;
+    if (!ctx?.message?.text) return;
     if (ctx.message.text.startsWith("/")) return;
     Notifier.log(
       "[INFO] Получено сообщение от пользователя:",
@@ -118,7 +118,7 @@ Memory: ${JSON.stringify(memoryUsage, null, 2)}`;
     );
     if (ctx.chat.type === "private") {
       let text = ctx.message.text;
-      if (ctx.from && ctx.from.username) {
+      if (ctx?.from?.username) {
         text += `\n\n@${ctx.from.username}`;
       }
       try {

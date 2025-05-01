@@ -53,7 +53,7 @@ class App {
       this.model = genAI.getGenerativeModel({
         model: "gemini-2.0-flash-thinking-exp-01-21",
         generationConfig: {
-          temperature: 0.9,
+          temperature: 2,
           topP: 0.9,
           topK: 40,
           candidateCount: 1,
@@ -179,7 +179,7 @@ class App {
         this.server.close((err) => {
           if (err) {
             Notifier.error(err, { module: "App.closeServices.serverClose" });
-            return reject(err);
+            return reject(err instanceof Error ? err : new Error(err));
           }
           resolve();
         });
@@ -192,7 +192,7 @@ class App {
       mongoose.connection.close(false, (err) => {
         if (err) {
           Notifier.error(err, { module: "App.closeServices.mongooseClose" });
-          return reject(err);
+          return reject(err instanceof Error ? err : new Error(err));
         }
         resolve();
       });
