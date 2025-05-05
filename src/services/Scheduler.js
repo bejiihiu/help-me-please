@@ -2,6 +2,7 @@ const fs = require("fs/promises")
 const { randomInt } = require("crypto")
 const PostModel = require("../models/Post")
 const Notifier = require("../utils/Notifier")
+const { Type } = require("@google/genai");
 
 class Scheduler {
   #timeoutId = null

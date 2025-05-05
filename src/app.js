@@ -6,7 +6,7 @@ const Notifier = require("./utils/Notifier");
 const Database = require("./services/Database");
 const Scheduler = require("./services/Scheduler");
 const setupBot = require("./bot/bot");
-const { GoogleGenerativeAI } = require("@google/generative-ai");
+const { GoogleGenAI } = require("@google/genai");
 const mongoose = require("mongoose");
 
 class App {
@@ -49,7 +49,7 @@ class App {
         throw new Error("Отсутствует ключ GEMINI_KEY в конфигурации.");
       }
       const systemInstruction = await fs.readFile("system.txt", "utf-8");
-      const genAI = new GoogleGenerativeAI(env.GEMINI_KEY);
+      const genAI = new GoogleGenAI(env.GEMINI_KEY);
       this.model = genAI.getGenerativeModel({
         model: "gemini-2.0-flash-thinking-exp-01-21",
         generationConfig: {
