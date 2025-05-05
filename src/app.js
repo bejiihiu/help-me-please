@@ -48,19 +48,7 @@ class App {
       if (!env.GEMINI_KEY) {
         throw new Error("Отсутствует ключ GEMINI_KEY в конфигурации.");
       }
-      const systemInstruction = await fs.readFile("system.txt", "utf-8");
-      const genAI = new GoogleGenAI(env.GEMINI_KEY);
-      this.model = genAI.getGenerativeModel({
-        model: "gemini-2.0-flash-thinking-exp-01-21",
-        generationConfig: {
-          temperature: 2,
-          topP: 0.9,
-          topK: 40,
-          candidateCount: 1,
-          responseLogprobs: false,
-        },
-        systemInstruction,
-      });
+      this.model = new GoogleGenAI({ apiKey: env.GEMINI_KEY });
       Notifier.log("[INFO] Генеративная модель успешно инициализирована.");
     });
   }

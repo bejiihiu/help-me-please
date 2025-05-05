@@ -119,9 +119,17 @@ class Scheduler {
       Scheduler.logInfo(`читаем промпт из ${promptPath}`)
       const prompt = await fs.readFile(promptPath, "utf-8")
 
-      const result = await this.model.generateContent({
+      const systemInstruction = await fs.readFile("system.txt", "utf-8");
+      const result = await this.model.models.generateContent({
+        model: "gemini-2.0-flash-thinking-exp-01-21",
         contents: prompt,
         config: {
+          systemInstruction,
+          temperature: 2,
+          topP: 0.9,
+          topK: 40,
+          candidateCount: 1,
+          responseLogprobs: false,
           responseMimeType: "application/json",
           responseSchema: {
             type: Type.OBJECT,
