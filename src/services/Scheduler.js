@@ -154,7 +154,7 @@ class Scheduler {
         : result.text
 
       const json = JSON.parse(raw)
-      const message = `${json.emoji} ${json.quote}\n\n${json.hashtags.join(" ")}`
+      const message = `${json.emoji} - ${json.quote}\n\n||${json.hashtags.join(" ")}||`
       return { message, theme: json.theme }
     } catch (e) {
       await Scheduler.logError("generateTextFromPrompt", e)
