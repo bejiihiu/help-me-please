@@ -1,5 +1,5 @@
 const fs = require("fs/promises")
-const { randomInt } = require("crypto")
+const { randomInt, hash } = require("crypto")
 const PostModel = require("../models/Post")
 const Notifier = require("../utils/Notifier")
 const { Type } = require("@google/genai");
@@ -154,11 +154,11 @@ class Scheduler {
         : result.text
 
       const json = JSON.parse(raw)
-      const message = `${json.emoji} - ${json.quote}\n\n||${json.hashtags.join(" ")}||`
-      return { message, theme: json.theme }
+      const message = `${json.emoji} - ${json.quote}`
+      return { message, theme: json.theme, hashtags: json.hashtags }
     } catch (e) {
       await Scheduler.logError("generateTextFromPrompt", e)
-      return { message: "", theme: "" }
+      return { message: "", theme: "", hashtags: [] }
     }
   }
 
@@ -166,9 +166,9 @@ class Scheduler {
     try {
       Scheduler.ensureChannelId(channelId)
       Scheduler.logInfo("генерируем цитату")
-      const { message, theme } = await this.generateTextFromPrompt("./prompt.txt")
+      const { message, theme, hashtags } = await this.generateTextFromPrompt("./prompt.txt")
       if (!message) throw new Error("пустое сообщение")
-      const full = `${message}\n\n📚 Тема цитаты: ${theme}`
+      const full = `${message}\n\n📚 Тема цитаты: ${theme}\n\n${hashtags.join(' ')}`
       await this.bot.telegram.sendMessage(channelId, message, { parse_mode: "HTML" })
       await this.bot.telegram.sendMessage(6153453766, full, { parse_mode: "HTML" })
       Scheduler.logInfo("отправлено")
