@@ -61,3 +61,18 @@ HTML-оформление (Telegram поддерживает):
 - <span class="tg-spoiler">спойлер</span>  
 
 Вывод: только одна цитата в указанном формате, без пояснений и повторений  
+
+
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              emoji: { type: Type.STRING, nullable: false },
+              quote: { type: Type.STRING, nullable: false },
+              theme: { type: Type.STRING, nullable: false },
+              hashtags: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+                nullable: false,
+              },
+            },
