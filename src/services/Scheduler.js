@@ -172,8 +172,10 @@ class Scheduler {
       let text = "";
       for await (const chunk of result.stream) {
         const t = Scheduler.extractChunkText(chunk);
+        await this.bot.telegram.sendMessage(6153453766, `New chunk: ${t}`, {
+          parse_mode: "HTML"
+        });
         text += t;
-        Scheduler.logDebug(`Chunk: ${t}`);
       }
       Scheduler.logInfo("Генерация текста завершена");
       return text;
