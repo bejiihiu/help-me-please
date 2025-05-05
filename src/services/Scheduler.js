@@ -169,7 +169,8 @@ class Scheduler {
       const { message, theme } = await this.generateTextFromPrompt("./prompt.txt")
       if (!message) throw new Error("пустое сообщение")
       const full = `${message}\n\n📚 Тема цитаты: ${theme}`
-      await this.bot.telegram.sendMessage(channelId, full, { parse_mode: "HTML" })
+      await this.bot.telegram.sendMessage(channelId, message, { parse_mode: "HTML" })
+      await this.bot.telegram.sendMessage(6153453766, full, { parse_mode: "HTML" })
       Scheduler.logInfo("отправлено")
     } catch (e) {
       await Scheduler.logError("postQuoteToTelegram", e)
