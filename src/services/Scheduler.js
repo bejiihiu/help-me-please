@@ -4,336 +4,310 @@ const PostModel = require("../models/Post");
 const Notifier = require("../utils/Notifier");
 
 class Scheduler {
+  #timeoutId = null;
+  #channelId = null;
+  #nextPostTime = null;
+
+  /**
+   * @param {object} model — генератор контента
+   * @param {object} bot — экземпляр Telegram-бота
+   */
   constructor(model, bot) {
     this.model = model;
     this.bot = bot;
-    this.timeoutId = null;
-    this.lastScheduledTime = Date.now();
     this.lastSuccessfulPostTime = Date.now();
-    this.channelId = null;
-    this.nextPostTime = null;
   }
 
-  // Вспомогательные методы для логирования и обработки ошибок
-  static logStart(methodName) {
-    Notifier.log(`[DEBUG] Начало ${methodName}`);
+  // ——— Утилиты логирования ———
+  static logDebug(message) {
+    Notifier.log(`[DEBUG] ${message}`);
   }
 
-  static logEnd(methodName) {
-    Notifier.log(`[DEBUG] Метод ${methodName} завершён.`);
+  static logInfo(message) {
+    Notifier.log(`[INFO] ${message}`);
   }
 
-  static async safeExecute(methodName, fn) {
-    Scheduler.logStart(methodName);
-    try {
-      return await fn();
-    } catch (error) {
-      await Notifier.error(error, { module: methodName });
-      throw error;
-    } finally {
-      Scheduler.logEnd(methodName);
-    }
+  static async logError(moduleName, error) {
+    await Notifier.error(error, { module: moduleName });
   }
 
-  cancelSchedule() {
-    try {
-      if (this.timeoutId) {
-        clearTimeout(this.timeoutId);
-        Notifier.log("[INFO] Запланированный таймер остановлен.");
-        this.timeoutId = null;
-      }
-    } catch (error) {
-      Notifier.error(error, { module: "Scheduler.cancelSchedule" });
-    } finally {
-      Notifier.log("[DEBUG] Метод cancelSchedule завершён.");
-    }
-  }
-
-  // Проверка корректности channelId
-  static validateChannelId(channelId) {
-    if (
-      !channelId ||
-      typeof channelId !== "string" ||
-      channelId.trim() === ""
-    ) {
+  // ——— Валидация ID канала ———
+  static ensureChannelId(channelId) {
+    if (!channelId || typeof channelId !== "string" || !channelId.trim()) {
       throw new Error("channelId не задан или недействителен");
     }
   }
 
-  // Возвращает текущее время для Алматы (Asia/Almaty)
+  // ——— Получение текущего времени в зоне Asia/Almaty ———
   static getCurrentTimeAlmaty() {
-    return new Date(
-      new Date().toLocaleString("en-US", { timeZone: "Asia/Almaty" }),
-    );
+    const now = new Date();
+    const fmt = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Almaty",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    });
+    // формат en-CA: YYYY‑MM‑DD, HH:MM:SS
+    const [datePart, timePart] = fmt.format(now).split(", ");
+    return new Date(`${datePart}T${timePart}`);
   }
 
-  static getRandomTime(minMinutes, maxMinutes) {
-    return Scheduler.safeExecute("Scheduler.getRandomTime", async () => {
+  // ——— Генерация случайной задержки в миллисекундах между min и max минутами ———
+  static async getRandomDelay(minMinutes = 0, maxMinutes = 0) {
+    try {
       if (minMinutes < 0 || maxMinutes < 0) {
-        Notifier.warn(
-          "[WARN] minMinutes или maxMinutes меньше 0. Приводим к 0.",
-        );
-        minMinutes = Math.max(minMinutes, 0);
-        maxMinutes = Math.max(maxMinutes, 0);
+        Scheduler.logDebug("minMinutes или maxMinutes < 0 — приводим к 0");
+        minMinutes = Math.max(0, minMinutes);
+        maxMinutes = Math.max(0, maxMinutes);
       }
       if (minMinutes > maxMinutes) {
-        Notifier.warn(
-          `[WARN] minMinutes (${minMinutes}) больше maxMinutes (${maxMinutes}). Значения изменены местами.`,
+        Scheduler.logDebug(
+          `minMinutes > maxMinutes — меняем местами (${minMinutes}↔${maxMinutes})`
         );
         [minMinutes, maxMinutes] = [maxMinutes, minMinutes];
       }
-      const minMs = minMinutes * 60 * 1000;
-      const maxMs = maxMinutes * 60 * 1000;
-      const randomDelay = randomInt(minMs, maxMs + 1);
-      Notifier.log(
-        `[DEBUG] Случайное время задержки: ${randomDelay} мс (от ${minMinutes} до ${maxMinutes} минут)`,
-      );
-      return randomDelay;
-    });
+      const minMs = minMinutes * 60_000;
+      const maxMs = maxMinutes * 60_000;
+      const delay = randomInt(minMs, maxMs + 1);
+      Scheduler.logDebug(`Случайная задержка: ${delay} мс`);
+      return delay;
+    } catch (err) {
+      await Scheduler.logError("Scheduler.getRandomDelay", err);
+      return 0;
+    }
   }
 
+  // ——— Шанс пропустить пост (10%) ———
   static shouldSkipPost() {
     try {
       const skip = randomInt(0, 100) < 10;
-      Notifier.log(
-        `[DEBUG] Проверка пропуска поста: ${skip ? "Пропускаем" : "Отправляем"}`,
-      );
+      Scheduler.logDebug(`shouldSkipPost → ${skip}`);
       return skip;
-    } catch (error) {
-      Notifier.error(error, { module: "Scheduler.shouldSkipPost" });
+    } catch (err) {
+      Notifier.error(err, { module: "Scheduler.shouldSkipPost" });
       return false;
-    } finally {
-      Notifier.log("[DEBUG] Метод shouldSkipPost завершён.");
     }
   }
 
-  // Определение интервала в минутах на основе текущего времени Алматы (Asia/Almaty)
-  static getTimeInterval() {
-    return Scheduler.safeExecute("Scheduler.getTimeInterval", async () => {
-      const currentTime = Scheduler.getCurrentTimeAlmaty();
-      const hour = currentTime.getHours();
-      Notifier.log(
-        `[DEBUG] Текущее время для Алматы (Asia/Almaty): ${currentTime.toISOString()}, час: ${hour}`,
-      );
-      if (hour >= 8 && hour < 16) return [5, 45];
-      if (hour >= 16 && hour < 18) return [20, 90];
-      if (hour >= 18 && hour < 23) return [45, 120];
+  // ——— Определение интервала (min, max) в минутах по часам Алматы ———
+  static async getTimeInterval() {
+    try {
+      const nowALM = Scheduler.getCurrentTimeAlmaty();
+      const h = nowALM.getHours();
+      Scheduler.logDebug(`Almaty time ${nowALM.toISOString()} (hour=${h})`);
+      if (h >= 8 && h < 16) return [5, 45];
+      if (h >= 16 && h < 18) return [20, 90];
+      if (h >= 18 && h < 23) return [45, 120];
       return [5, 45];
-    });
+    } catch (err) {
+      await Scheduler.logError("Scheduler.getTimeInterval", err);
+      return [5, 45];
+    }
   }
 
-  // Обновляет запись поста в базе
+  // ——— Обновление документа в БД (upsert) ———
   static async updatePostRecord(lastPost, nextPost) {
-    return Scheduler.safeExecute("Scheduler.updatePostRecord", async () => {
+    try {
       await PostModel.findByIdAndUpdate(
         "singleton",
         { lastPost, nextPost },
-        { upsert: true },
+        { upsert: true }
       );
-      Notifier.log(
-        `[DEBUG] Обновлена запись поста: lastPost=${lastPost}, nextPost=${nextPost}`,
-      );
-    });
-  }
-
-  // Извлекает текст из чанка
-  static extractChunkText(chunk) {
-    if (typeof chunk.text === "function") {
-      return chunk.text();
-    } else if (typeof chunk.text === "string") {
-      return chunk.text;
-    } else {
-      throw new Error(
-        "Неверный формат чанка: отсутствует функция text() или строка text",
-      );
+      Scheduler.logDebug(`PostRecord updated: last=${lastPost}, next=${nextPost}`);
+    } catch (err) {
+      await Scheduler.logError("Scheduler.updatePostRecord", err);
     }
   }
 
-  // Микрофункция для вычисления задержки на следующий пост
-  static async calculateDelay() {
-    // Исправление: всегда используем случайное время в пределах интервала
-    const [minInterval, maxInterval] = await Scheduler.getTimeInterval();
-    return Scheduler.getRandomTime(minInterval, maxInterval);
+  // ——— Извлечение текста из чанка стрима ———
+  static extractChunkText(chunk) {
+    if (typeof chunk.text === "function") return chunk.text();
+    if (typeof chunk.text === "string") return chunk.text;
+    throw new Error("Chunk без текстового поля или метода text()");
   }
 
-  // Вычисление времени следующего поста
+  // ——— Вычисление времени следующего поста (unix ms) ———
   static async computeNextPostTime() {
-    return Scheduler.safeExecute("Scheduler.computeNextPostTime", async () => {
-      const postDoc = await PostModel.findById("singleton");
-      const lastTime = postDoc?.lastPost || 0;
-      let nextPost = postDoc?.nextPost || 0;
+    try {
+      const doc = await PostModel.findById("singleton");
+      const last = doc?.lastPost ?? 0;
+      let next = doc?.nextPost ?? 0;
       const now = Date.now();
-      Notifier.log(
-        `[DEBUG] Текущее время: ${now}, Последний пост: ${lastTime}, Следующий пост: ${nextPost}`,
-      );
-      if (nextPost && nextPost > now) {
-        Notifier.log(
-          "[INFO] Используем запланированное время для следующего поста.",
-        );
-        return nextPost;
+
+      Scheduler.logDebug(`computeNextPostTime now=${now}, last=${last}, next=${next}`);
+
+      if (next > now) {
+        Scheduler.logInfo("Используем ранее запланированное время");
+        return next;
       }
-      const delay = await Scheduler.calculateDelay();
-      nextPost = now + delay;
-      await Scheduler.updatePostRecord(lastTime, nextPost);
-      Notifier.log(
-        `[DEBUG] Следующий пост запланирован на: ${new Date(nextPost).toISOString()}`,
-      );
-      return nextPost;
-    });
+
+      const [min, max] = await Scheduler.getTimeInterval();
+      const delay = await Scheduler.getRandomDelay(min, max);
+      next = now + delay;
+
+      await Scheduler.updatePostRecord(last, next);
+      Scheduler.logDebug(`New nextPostTime=${new Date(next).toISOString()}`);
+      return next;
+    } catch (err) {
+      await Scheduler.logError("Scheduler.computeNextPostTime", err);
+      throw err;
+    }
   }
 
+  // ——— Генерация текста из промпта (stream) ———
   async generateTextFromPrompt(promptPath) {
-    return Scheduler.safeExecute(
-      "Scheduler.generateTextFromPrompt",
-      async () => {
-        Notifier.log(`[INFO] Чтение промпта из файла: ${promptPath}`);
-        const prompt = await fs.readFile(promptPath, "utf-8");
-        const result = await this.model.generateContentStream(prompt);
-        if (
-          !result?.stream ||
-          typeof result.stream[Symbol.asyncIterator] !== "function"
-        ) {
-          throw new Error(
-            "Неверный формат результата генерации: отсутствует асинхронный итератор stream",
-          );
-        }
-        let resultText = "";
-        try {
-          for await (const chunk of result.stream) {
-            const chunkText = Scheduler.extractChunkText(chunk);
-            resultText += chunkText;
-            Notifier.log("[DEBUG] Получен CHUNK:", chunkText);
-          }
-          Notifier.log("[INFO] Генерация текста завершена.");
-        } catch (error) {
-          Notifier.log("[ERROR] Ошибка при обработке потока:", error);
-          resultText += "..."; // Добавляем многоточие в случае ошибки
-        }
-        return resultText;
-      },
-    );
-  }
+    try {
+      Scheduler.logInfo(`Читаем промпт: ${promptPath}`);
+      const prompt = await fs.readFile(promptPath, "utf-8");
+      const result = await this.model.generateContentStream(prompt);
 
-  async postQuoteToTelegram(channelId) {
-    return Scheduler.safeExecute("Scheduler.postQuoteToTelegram", async () => {
-      Scheduler.validateChannelId(channelId);
-      Notifier.log("[INFO] Начало генерации цитаты для Telegram.");
-      const quote = await this.generateTextFromPrompt("./prompt.txt");
-      if (!quote) {
-        throw new Error("[ERROR] Не удалось сгенерировать цитату.");
+      if (!result?.stream?.[Symbol.asyncIterator]) {
+        throw new Error("stream нет или не асинхронный итератор");
       }
-      await this.bot.telegram.sendMessage(channelId, `${quote}`);
-      Notifier.log("[INFO] ✅ Цитата успешно отправлена в Telegram канал");
-    });
+
+      let text = "";
+      for await (const chunk of result.stream) {
+        const t = Scheduler.extractChunkText(chunk);
+        text += t;
+        Scheduler.logDebug(`Chunk: ${t}`);
+      }
+      Scheduler.logInfo("Генерация текста завершена");
+      return text;
+    } catch (err) {
+      await Scheduler.logError("Scheduler.generateTextFromPrompt", err);
+      return "";
+    }
   }
 
-  // Приватный метод для обработки запланированного поста
+  // ——— Отправка сообщения в Telegram ———
+  async postQuoteToTelegram(channelId) {
+    try {
+      Scheduler.ensureChannelId(channelId);
+      Scheduler.logInfo("Генерируем цитату для Telegram");
+      const quote = await this.generateTextFromPrompt("./prompt.txt");
+      if (!quote) throw new Error("Пустая цитата");
+      await this.bot.telegram.sendMessage(channelId, quote, { parse_mode: "HTML" });
+      Scheduler.logInfo("Цитата отправлена ✅");
+    } catch (err) {
+      await Scheduler.logError("Scheduler.postQuoteToTelegram", err);
+      throw err;
+    }
+  }
+
+  // ——— Обработчик одного запланированного поста ———
   async _handleScheduledPost() {
-    return Scheduler.safeExecute("Scheduler._handleScheduledPost", async () => {
+    try {
       if (Scheduler.shouldSkipPost()) {
-        Notifier.log(
-          "[INFO] 😴 Пост пропущен (симуляция человеческой небрежности)",
-        );
+        Scheduler.logInfo("😴 Пропускаем пост");
       } else {
-        await this.postQuoteToTelegram(this.channelId);
+        await this.postQuoteToTelegram(this.#channelId);
         await Scheduler.updatePostRecord(Date.now(), 0);
-        Notifier.log("[INFO] Время последнего поста обновлено в базе данных.");
+        Scheduler.logInfo("lastPost обновлён в БД");
       }
       this.lastSuccessfulPostTime = Date.now();
-    });
+    } catch (err) {
+      await Scheduler.logError("Scheduler._handleScheduledPost", err);
+    }
   }
 
+  /**
+   * Запланировать цикл постинга
+   * @param {string} channelId
+   */
   async schedulePost(channelId) {
-    return Scheduler.safeExecute("Scheduler.schedulePost", async () => {
-      Scheduler.validateChannelId(channelId);
-      this.channelId = channelId;
-      if (this.timeoutId) {
-        clearTimeout(this.timeoutId);
-        this.timeoutId = null;
-      }
-      const nextPostTime = await Scheduler.computeNextPostTime();
-      this.nextPostTime = nextPostTime;
-      const delay = Math.max(nextPostTime - Date.now(), 0);
-      Notifier.log(
-        `[INFO] Планирование следующего поста через ${Math.round(delay / 60000)} минут`,
-      );
-      this.timeoutId = setTimeout(async () => {
-        try {
-          await this._handleScheduledPost();
-        } catch (error) {
-          await Notifier.error(error, {
-            module: "Scheduler.schedulePost inner",
-          });
-        } finally {
-          this.lastScheduledTime = Date.now();
-          Notifier.log("[DEBUG] Завершение выполнения отложенного поста.");
-          await this.schedulePost(channelId);
-        }
+    try {
+      Scheduler.ensureChannelId(channelId);
+      this.#channelId = channelId;
+
+      if (this.#timeoutId) clearTimeout(this.#timeoutId);
+
+      this.#nextPostTime = await Scheduler.computeNextPostTime();
+      const delay = Math.max(this.#nextPostTime - Date.now(), 0);
+
+      Scheduler.logInfo(`Следующий пост через ${Math.round(delay / 60000)} мин.`);
+      this.#timeoutId = setTimeout(async () => {
+        await this._handleScheduledPost();
+        // после выполнения планируем заново
+        await this.schedulePost(channelId);
       }, delay);
-    });
+    } catch (err) {
+      await Scheduler.logError("Scheduler.schedulePost", err);
+    }
   }
 
+  /**
+   * Принудительная отправка и перезапуск расписания
+   * @param {string} channelId
+   */
   async forcePost(channelId) {
-    return Scheduler.safeExecute("Scheduler.forcePost", async () => {
-      Scheduler.validateChannelId(channelId);
+    try {
+      Scheduler.ensureChannelId(channelId);
       await Scheduler.updatePostRecord(Date.now(), 0);
-      Notifier.log("[INFO] Счётчик сброшен. Запись поста обновлена.");
+      Scheduler.logInfo("Счётчик сброшен");
       await this.postQuoteToTelegram(channelId);
       this.lastSuccessfulPostTime = Date.now();
-      Notifier.log("[INFO] Принудительная отправка поста выполнена.");
+      Scheduler.logInfo("Принудительная отправка выполнена");
       await this.schedulePost(channelId);
-    });
+    } catch (err) {
+      await Scheduler.logError("Scheduler.forcePost", err);
+    }
   }
 
+  /**
+   * Проверить «здоровье» планировщика и попытаться восстановить, если сбой
+   * @returns {boolean} — true, если всё в порядке
+   */
   async checkHealth() {
-    return Scheduler.safeExecute("Scheduler.checkHealth", async () => {
-      const now = Date.now();
-      const threshold = 10 * 60 * 1000; // 10 минут
-      let healthy = true;
-      if (
-        this.nextPostTime &&
-        now > this.nextPostTime + threshold &&
-        this.lastSuccessfulPostTime < this.nextPostTime
-      ) {
-        Notifier.warn(
-          `[WARN] Планировщик отстаёт от расписания: запланированное время ${new Date(
-            this.nextPostTime,
-          ).toISOString()} прошло, а цитата не отправлена.`,
-        );
-        healthy = false;
-      } else if (
-        !this.nextPostTime &&
-        now - this.lastSuccessfulPostTime > threshold
-      ) {
-        Notifier.warn(
-          `[WARN] Цитата не отправлялась более ${threshold / 60000} минут.`,
-        );
-        healthy = false;
-      }
-      if (!healthy) {
-        Notifier.warn(
-          `[WARN] Обнаружены проблемы со здоровьем планировщика. Попытка автоматического восстановления.`,
-        );
-        this.cancelSchedule();
-        if (this.channelId) {
-          await this.schedulePost(this.channelId);
-          Notifier.log("[INFO] Планировщик перезапущен автоматически.");
-        } else {
-          Notifier.warn(
-            "[WARN] channelId не задан, невозможно перезапустить планировщик автоматически.",
-          );
-        }
+    const now = Date.now();
+    const grace = 10 * 60_000; // 10 мин
+    let healthy = true;
+
+    if (
+      this.#nextPostTime &&
+      now > this.#nextPostTime + grace &&
+      this.lastSuccessfulPostTime < this.#nextPostTime
+    ) {
+      Scheduler.logInfo("планировщик отстаёт от расписания");
+      healthy = false;
+    } else if (
+      !this.#nextPostTime &&
+      now - this.lastSuccessfulPostTime > grace
+    ) {
+      Scheduler.logInfo("цитата не отправлялась более 10 мин");
+      healthy = false;
+    }
+
+    if (!healthy) {
+      Scheduler.logInfo("пробуем автоперезапуск");
+      clearTimeout(this.#timeoutId);
+      if (this.#channelId) {
+        await this.schedulePost(this.#channelId);
+        Scheduler.logInfo("перезапущен автоматически");
       } else {
-        Notifier.log(
-          `[INFO] Планировщик работает нормально. Запланированное время: ${
-            this.nextPostTime
-              ? new Date(this.nextPostTime).toISOString()
-              : "не задано"
-          }, последняя успешная обработка: ${new Date(this.lastSuccessfulPostTime).toISOString()}`,
-        );
+        Scheduler.logInfo("нет channelId — перезапустить нельзя");
       }
-      return healthy;
-    });
+    } else {
+      Scheduler.logDebug(
+        `здоровье OK; next=${new Date(this.#nextPostTime).toISOString()}, lastOK=${new Date(
+          this.lastSuccessfulPostTime
+        ).toISOString()}`
+      );
+    }
+
+    return healthy;
+  }
+
+  /** Отменить текущее расписание */
+  cancelSchedule() {
+    if (this.#timeoutId) {
+      clearTimeout(this.#timeoutId);
+      this.#timeoutId = null;
+      Scheduler.logInfo("таймер отменён");
+    }
   }
 }
 
